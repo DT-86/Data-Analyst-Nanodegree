@@ -1,0 +1,12 @@
+Selected Map Area Website
+	https://www.openstreetmap.org/relation/182706
+	https://www.openstreetmap.org/export#map=13/39.9596/-83.0105
+
+Website References:
+	https://wiki.openstreetmap.org/wiki/Map_Features 
+	http://www.mapszipcode.com/ohio/columbus
+	https://wiki.openstreetmap.org/wiki/Key:amenity
+	https://taginfo.openstreetmap.org/keys/amenity#values
+	https://regex101.com/
+	https://docs.python.org/3/library/csv.html
+	https://docs.python.org/3/tutorial/inputoutput.html

@@ -1,0 +1,915 @@
+---
+output:
+  html_document: default
+---
+
+__Videogames Analysis With R by Damien__
+======================================================== 
+
+This report explores a dataset containing regional and global sales, along 
+with user and critic scores for approximately 16,700 video games. 
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, library_imports}
+# Load all of the packages that you end up using in your analysis in this code
+# chunk.
+
+# Notice that the parameter "echo" was set to FALSE for this code chunk. This
+# prevents the code from displaying in the knitted HTML output. You should set
+# echo=FALSE for all code chunks in your file, unless it makes sense for your
+# report to show the code that generated a particular plot.
+
+# The other parameters for "message" and "warning" should also be set to FALSE
+# for other code chunks once you have verified that each plot comes out as you
+# want it to. This will clean up the flow of your report.
+install.packages('tidyverse')
+install.packages('ggthemes')
+install.packages('knitr')
+install.packages('gridExtra')
+install.packages('scales')
+install.packages('RColorBrewer')
+install.packages('corrplot')
+install.packages('ggrepel')
+install.packages("hexbin")
+install.packages('Hmisc')
+library(tidyverse)
+library(ggthemes)
+library(knitr)
+library(gridExtra)
+library(scales)
+library(RColorBrewer)
+library(hexbin)
+library(corrplot)
+library(ggrepel)
+library(Hmisc)
+options(warn =-1)
+theme_set(theme_minimal(12))
+```
+
+```{r echo=FALSE, message=FALSE, Load_the_Data}
+# Load the Data
+games <- read.csv('Video_Games_Sales_as_at_22_Dec_2016.csv')
+```
+# __Univariate Plots Section__
+
+```{r echo=FALSE, Univariate_Plots}
+# Provide summarys of the videogames  dataset
+str(games)
+summary(games)
+```
+
+Our dataset contains 16 variables, with almost 17,000 observations.
+
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, Hist_Function}
+# Filter out games with no titles, since this specific games
+# are also missing other variables
+games <- filter(games, Name != "")
+games$User_Score[games$User_Score == 'tbd'] <- NA
+# Convert character values to numericals
+games$Year_of_Release <- as.numeric(as.character(games$Year_of_Release))
+games$User_Score <- as.numeric(as.character(games$User_Score)) * 10
+games$User_Count <- as.numeric(as.character(games$User_Count))
+games$Critic_Count <- as.numeric(as.character(games$Critic_Count))
+games$Critic_Score <- as.numeric(as.character(games$Critic_Score))
+
+# Remove any game with a release date after 2016
+games <- games %>% filter(Year_of_Release<=2016)
+
+# Create function for histogram plots and correct plot lables
+# and scale by log10 if scale_log is TRUE
+hplot <- function(feature, label, scale_log=TRUE) {
+  if (scale_log == TRUE) {
+    return((ggplot(data=games, mapping=aes(x=feature),
+             xlabl=label, ylab='Frequency') +
+              geom_histogram()) +
+              scale_y_continuous(trans = 'log10',
+                breaks = trans_breaks('log10', function(x) 10^x),
+                labels = trans_format('log10', math_format(10^.x))) +
+              xlab(label) + 
+              ylab('Frequency')) } else {
+   return((ggplot(data=games, mapping=aes(x=feature),
+                  xlabl=label, ylab='Frequency') +
+                  geom_histogram(binwidth=5)) +
+                xlab(label) + 
+                ylab('Frequency'))
+           }
+}
+
+hplot(games$Global_Sales, 'Global Sales')
+
+# Plot 4 histrograms with 2 charts per row
+grid.arrange(hplot(games$NA_Sales, 'North America Sales', TRUE),
+              hplot(games$EU_Sales, 'European Union Sales', TRUE),
+              hplot(games$JP_Sales, 'Japan Sales', TRUE),
+              hplot(games$Other_Sales, 'Other Region Sales', TRUE),
+              ncol=2)
+
+# Print summaryes of each sales category  
+print("Global Sales")
+summary(games$Global_Sales)
+print("North America Sales")
+summary(games$NA_Sales)
+print("European Union Sales")
+summary(games$EU_Sales)
+print("Japan Sales")
+summary(games$JP_Sales)
+print("Other Region Sales")
+summary(games$Other_Sales)
+```
+
+I wanted to view the distribution of sales among all the regions, as well as
+globally. All of the sales distributions are skewed to the right.  Is their a 
+specific genre that's causing North America to have more sales than the other
+regions? Why is their a gap in quantity of sales for most of the regions? I'm 
+curious if this is due to outliers.
+
+
+```{r echo=FALSE, message=FALSE, Univariate_Genre}
+
+# Create function to plot histograms for non-numerical categories
+st_plot <- function(feature, label) {
+  return(ggplot() +
+          stat_count(data=games, mapping = aes(x=feature)) + 
+          theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)) +
+          xlab(label) +
+          ylab('Frequency'))
+}
+
+st_plot(games$Genre, "Game Genre")
+
+```
+
+The Action Genre appears to be the most common, followed by the Sports genre.
+Genre has multiple peaks which makes it a multimodal distribution. Next I'll
+take a look at the distribution of the platforms.
+
+
+
+```{r echo=FALSE, message=FALSE, Univariate_Platform}
+st_plot(games$Platform, "Videogame Platform")
+```
+
+The platforms with the largest game library are the Nintendo DS and 
+the Playstation 2. Platform also has multiple peaks making it a multimodal
+distribution. What does the distribution of games by year look?
+
+  
+
+```{r echo=FALSE, message=FALSE, Univariate_Year_of_Release}
+st_plot(games$Year_of_Release, "Number of Games by Year") +
+  scale_x_continuous(breaks=1980:2016)
+```
+
+We can see a peak between the years 2008 and 2009. There were observations 
+beyond the year 2016. The dataset was created in 2016 so there shouldn't be any 
+observations beyond this year. I had to remove the data from 2017 and 2020 
+since there was no way to validate these observations at the time of creation.
+
+Next, I want to take a look at the user and critic scores and see their
+distribution. 
+
+```{r echo=FALSE, warning=FALSE, mutate_data}
+
+
+# Create two new variables, MeanScore and TotalCount
+vg <- mutate(games,
+             MeanScore = rowMeans(select(games, 
+                                         c('Critic_Score', 'User_Score'))),
+             TotalCount = rowSums(select(games, 
+                                         c('Critic_Count', 'User_Count'))))
+
+```
+
+```{r echo=FALSE, warning=FALSE, category_plots}
+# Use the hplot function to plot categoricals 
+hplot(vg$Critic_Score, "Critic Scores", FALSE) +
+  scale_x_continuous(breaks = seq(0, 100, 10))
+
+hplot(vg$User_Score, "User Scores", FALSE) +
+  scale_x_continuous(breaks = seq(0, 100, 10))
+
+hplot(vg$MeanScore, "Mean Scores", FALSE) +
+  scale_x_continuous(breaks = seq(0, 100, 10))
+
+
+# Display summary
+print("Critic Score")
+summary(vg$Critic_Score)
+summary(vg$Critic_Count)
+
+print("User Score")
+summary(vg$User_Score)
+summary(vg$User_Count)
+
+print("Mean Score")
+summary(vg$MeanScore)
+summary(vg$TotalCount)
+
+```
+
+
+On average, Critics rate games lower than Users. The Critics histogram is
+less left skewed than the users. There's a substantial number of user votes 
+compared to the critic reviews, whic could cause the average of the two to 
+inaccurate relationships. Does either one of them have a relationship
+with the different Sales variables?
+
+***
+
+# __Univariate Analysis__
+
+### What is the structure of your dataset? ###
+
+There are 16719 observations in the dataset with 16 features. The variables  
+NA_Sales, EU_Sales, JP_Sales, Other_Sales, and Global_Sales are represented as  
+millions of units. The Critic_Score and User_Score comes from the website   
+Metacritic which was established in 2001.
+
+Other observations:  
+  * The year 2002 saw a sharp rise in video game releases  
+  * The mean User Score is 71.26 while the mean Critic Score is 68.99  
+  * The mean number of scores per game is 203.2  
+  * North America has the largest amount of sales across the 4 regions  
+  * The Action Genre seems to generate the most sales.  
+
+### What is/are the main feature(s) of interest in your dataset?
+
+The main features in the data set are platform, genres, and sales. I'm 
+interested in determining how genre and platform performs over time 
+and across regions.
+
+### What other features in the dataset do you think will help support your  \   
+investigation into your feature(s) of interest?
+
+Critic and User scores may have an impact on sales, since higher scores could
+promote customer's to buy the game. 
+
+### Did you create any new variables from existing variables in the dataset?  \  
+
+I created a variable User_Score that multiplies User_Score by 10 to match
+the format of Critic_Score. I also created 2 new columns, MeanScore which is the
+mean of User and Critic scores, and TotalCount which is the sum of both 
+User and Critic counts.
+
+### Of the features you investigated, were there any unusual distributions?  \    
+Did you perform any operations on the data to tidy, adjust, or change the form  \   
+of the data? If so, why did you do this?
+
+The genre and year of release distributions indicated that there were missing 
+values in the dataset. After investigating the missing values, it was determined
+that 2 observations did not have a name, genre and several other features. So 
+these observations were removed from the dataset. 
+
+It was found that Year_of_Release had multiple observations beyond the year 2016
+with sales data. These observations were removed due to the dataset being
+compiled in Decemberof 2016. Year_of_Release was also converted to a numeric
+variable instead of character to allow easier plotting. 
+
+There were strings in the User Score column that were replaced with NA to prevent
+any calculation issues.
+
+
+***
+  
+# __Bivariate Plots Section__
+
+
+I wanted to see if there's a relationship between the reviewers and the number
+of reviews. 
+
+```{r echo=FALSE, warning=FALSE, fig.width=8, fig.height=4, Hexbins}
+# Function to generate hexbin plots 
+hex_plot <- function(feature, f_label, counts, c_label, color, l_label) {
+  return(ggplot(vg, aes(x=counts, y=feature)) +
+          stat_binhex() +
+          scale_fill_gradientn(colours=c('black', color),
+                               name=l_label, na.value=NA) +
+          # sets plot backgroun color to black
+          theme(panel.background = element_rect(fill='black'),
+                panel.grid.major=element_blank(),
+                panel.grid.minor=element_blank()) +
+          labs(x=c_label, y=f_label))
+}
+
+# arranges hexbin plots for 2 per row
+grid.arrange(
+  hex_plot(vg$Critic_Score, "Critic Scores", vg$Critic_Count, "Critic Count", 
+           "green", "Votes"),
+  hex_plot(vg$User_Score, "User Scores", vg$User_Count, "User Count", 
+           "magenta", "Votes"),
+  ncol=2)
+
+```
+
+Critic Score and Critic Count seem to correlate, whereas User Score and User
+count doesn't seem to have any relationship. This could be due to missing values
+throughout the column. Does Critic and User score's have a relationship?
+
+```{r echo=FALSE, warning=FALSE, User_Critic_Hex}
+hex_plot(vg$User_Score, "User Scores", vg$Critic_Score, "Critic Scores",  
+         "cyan", "Frequency") +
+          geom_smooth(method='lm', se=FALSE, col="white")
+
+```
+
+Critic and User Scores have a positive correlation. As critic score increases,
+we also see a increase in user scores. I'm interested in seeing if either scores
+have a relation with Global Sales.
+
+
+```{r echo=FALSE, warning=FALSE, fig.width=10, fig.height=4, Bivariate_Hexbin}
+grid.arrange(
+  hex_plot(vg$Global_Sales, "Global Sales",vg$Critic_Score, "Critic Score", 
+           "yellow", "Frequency") + 
+            geom_smooth(method='lm'),
+  hex_plot(vg$Global_Sales, "Global Sales", vg$User_Score, "User Score", 
+           "dodgerblue", "Frequency") + 
+            geom_smooth(method='lm'),
+  ncol=2)
+```
+
+There may be a relationship between Critic or User scores and 
+global sales. Will transforming the global scales using a log scale help see if 
+there's a relationship between the two variables?
+
+```{r echo=FALSE, warning=FALSE, fig.width=10, fig.height=4, Bivariate_Hexbin_2}
+grid.arrange(
+  hex_plot(vg$Global_Sales, "Global Sales", vg$Critic_Score, "Critic Score", 
+           "yellow", "Frequency") + 
+            scale_y_log10() +
+            geom_smooth(method='lm'),
+  hex_plot(vg$Global_Sales, "Global Sales", vg$User_Score, "User Score",
+           "dodgerblue", "Frequency") +
+            scale_y_log10() +
+            geom_smooth(method='lm'),
+  ncol=2)
+
+# Correlation test between critic/user scores and Global Sales
+cor.test(vg$Critic_Score, vg$Global_Sales)
+cor.test(vg$User_Score, vg$Global_Sales)
+```
+
+There does seem to be a positive correlation for both Critic and Users for global
+sales. With Critic's having a stronger relationship with global sales than users.
+
+Next I'll look at the categorical features platform, genre, and year of release.
+I'm interesting in seeing the spread of critic and user scores across these 
+various categorical variables.
+
+
+```{r echo=FALSE, warning=FALSE, Platform_Bivariates}
+grid.arrange(
+  ggplot(filter(vg, Critic_Score != ""),
+    mapping = aes(x=Platform, y=Critic_Score, rm.na=TRUE)) +
+    geom_boxplot() +
+    coord_flip() +
+    stat_summary(fun.y=mean, geom="point", shape=18, size=3) +
+    theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)),
+  ggplot(filter(vg, User_Score != ""),
+    mapping = aes(x=Platform, y=User_Score, rm.na=TRUE)) +
+    geom_boxplot() +
+    coord_flip() +
+    stat_summary(fun.y=mean, geom="point", shape=18, size=3) +
+    theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)),
+  ncol=2)
+```
+
+Looking at platform related observations, it becomes clear through boxplots that
+there are missing values when you compare User and Critic scores with global
+sales. There's multiple platforms that do not have either a user or critic score.
+It also seems the median rating a User gives a video game is higher than where 
+critics score them. Critics also have a wider spread when it comes to scores,
+with user's being more close together.
+
+```{r echo=FALSE, warning=FALSE, Platform_Bi_Sales}
+# Boxplot; could not turn into a function due to mappings
+
+b_plots <- function(x_feature, x_label, y_feature, y_label, scale=TRUE) {
+  if (scale == TRUE) {
+  ggplot(vg, mapping = aes(x = x_feature, y=y_feature, rm.na=TRUE)) +
+    geom_boxplot() +
+    stat_summary(fun.y=mean, geom='point', shape=18, size=3) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3)) +
+    xlab(x_label) + 
+    ylab(y_label) +
+    scale_y_log10()
+  } else {
+  ggplot(vg, mapping = aes(x = x_feature, y=y_feature, rm.na=TRUE)) +
+    geom_boxplot() +
+    stat_summary(fun.y=mean, geom='point', shape=18, size=3) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = 0.3)) +
+    xlab(x_label) + 
+    ylab(y_label)
+  }
+} 
+
+
+b_plots(vg$Platform, "Platform", vg$Global_Sales, "Global Sales", TRUE)
+
+
+```
+
+The Wii and DS seem to have a far higher number of outliers than the rest of 
+the platforms, with the Wii having the game that's sold the most units. I wonder
+what genre the game is in.
+
+```{r echo=FALSE, warning=FALSE, Genre_Bivariates}
+b_plots(vg$Genre, "Genre", vg$Critic_Score, "Critic Score", FALSE)
+b_plots(vg$Genre, "Genre", vg$User_Score, "User Score", FALSE)
+
+```
+
+The trend of user's having a higher median rating than critics continue across
+genres. Users definetly rate games lower than critics across every genre. How
+does global sales look when we look at it by genre.
+
+
+```{r echo=FALSE, warning=FALSE, Genre_Bi_Platforms}
+b_plots(vg$Genre, "Genre", vg$Global_Sales, "Global Sales", TRUE)
+```
+
+
+I also observed on the global_sales plot that the genre for the Wii's top selling
+game is most likely in the sports genre. Despite the Adventure genre having 
+having a median user rating of over 75, it has the lowest average global sales
+of all genres even though it has more releases than 6 other genres 
+(fighting, platform, puzzle, racing, simulation and strategy genres).
+
+ 
+
+```{r echo=FALSE, warning=FALSE, Year_of_Release_Bivariates}
+# boxplot critic scores
+ggplot(filter(vg, Year_of_Release<=2016), mapping=aes(x=Year_of_Release, y=Critic_Score)) +
+  geom_boxplot(mapping=aes(group=cut_width(Year_of_Release, 1))) +
+  stat_summary(fun.y=mean, geom="point", shape=18, size=3) +
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)) +
+  scale_x_continuous(breaks=1980:2016)
+
+ggplot(filter(vg, Year_of_Release<=2016), mapping=aes(x=Year_of_Release, y=User_Score)) +
+  geom_boxplot(mapping=aes(group=cut_width(Year_of_Release, 1))) +
+  stat_summary(fun.y=mean, geom="point", shape=18, size=3) +
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)) +
+  scale_x_continuous(breaks=1980:2016)
+```
+
+If we look at the median score for Critics the number started trending
+upwards around 2011 after being relatively flat for almost a decade. Critics also
+have a wider spread than users across almost every year. User tend to rate games
+more inconsistently with a large amount of outliers visible.
+
+Next I'll take a look at global sales over time.
+
+```{r echo=FALSE, warning=FALSE, Year_of_Release_Bi_Sales}
+# boxplot for Global Sales
+ggplot(filter(vg, Year_of_Release<=2016), mapping=aes(x=Year_of_Release, y=Global_Sales)) +
+  geom_boxplot(mapping=aes(group=cut_width(Year_of_Release, 1))) +
+  stat_summary(fun.y=mean, geom="point", shape=18, size=3) +
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)) +
+  scale_y_continuous(trans='log10') +
+  scale_x_continuous(breaks=1980:2016)
+  
+```
+
+
+
+Between 2006 and 2011 Global Sales appear relatively consistent, but in 2012
+the spread became wider, and continued this trend into 2016. We do see a decline
+in average sales starting in 2012 as well. 
+
+Next I will look at sales across regions to see if there's a genre that stands
+out across all regions.
+
+```{r echo=FALSE, warning=FALSE, facet_wrap}
+# create a key/value dataframe for easier plotting 
+vg_keys <- gather(vg[, c('Platform', 'Genre', 'NA_Sales', 'EU_Sales', 'JP_Sales', 'Other_Sales', 'Global_Sales')],
+       'Key','Value', -c('Platform', 'Genre'))
+# create factor for the Key variable to allow easier plotting
+vg_keys$Key <- factor(vg_keys$Key, levels=c("NA_Sales", "EU_Sales", "JP_Sales", "Other_Sales", "Global_Sales"))
+
+# plot for global sales from key value dataframe
+ggplot(filter(vg_keys, Key == "Global_Sales"), mapping=aes(x=Genre, y=Value)) +
+  geom_col(mapping=aes(x=Genre, y=Value, fill=Genre)) +
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)) +
+  ylab('Units Sold')
+
+# plot for regional sales from key value dataframe
+ggplot(filter(vg_keys, Key != "Global_Sales"), mapping=aes(x=Genre, y=Value)) +
+  geom_col(mapping=aes(x=Genre, y=Value, fill=Genre)) +
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)) +
+  ylab('Units Sold') +
+  facet_wrap(~Key, ncol=2)
+
+# print out a summary of genres with their global sales
+vg %>%
+  group_by(Genre) %>%
+  summarise(Global_Sales = sum(Global_Sales)) %>%
+  arrange(desc(Global_Sales))
+```
+
+If we look at Global Sales by genre we can see that the Action genre 
+significantly outsells the other genres. I was curious if this trend was common
+across all regions, and it turns out that it is,with the exception of Japan 
+which has more sales from the role-playing genre than the action genre. 
+North America clearly outsells the other regions in almost every genre.
+
+
+
+***
+# __Bivariate Analysis__
+
+
+### Talk about some of the relationships you observed in this part of the  \    
+investigation. How did the feature(s) of interest vary with other features in  \     
+the dataset?
+
+Some of the relationship's observed is with the way Critic Scores and Count
+correlate with each other, but there doesn't seem to be a correlation between
+User Scores and Counts. However, there's a positive relationship between User
+and Critic scores. They both commonly rate games around a 75. 
+
+
+### Did you observe any interesting relationships between the other features  \     
+(not the main feature(s) of interest)?
+
+I was expecting to see a positive relationship based off of the hexbin plots
+between User/Critic Scores and Global sales. However, when you look at the 
+boxplots there's a significant amount outliers for poorly rated games, and but 
+there's multiple outliers across global sales.
+
+### What was the strongest relationship you found?
+
+The strongest relationship observed would be between genre and sales. Even though
+the action genre has an average score below 75 across Critics and Users, it 
+accounts for the highest amount of sales across every region except Japan. 
+
+
+***
+# __Multivariate Plots Section__
+
+Next I'll take a look at multiple variables to analyze relationships further.
+
+```{r echo=FALSE, warning=FALSE, fig.height=8, fig.width=12, Genre_Global}
+# grid arrangement of point plots with log10 scaling for genres
+grid.arrange(
+  ggplot(aes(y=as.numeric(Critic_Score), x=Global_Sales), 
+       data=filter(vg, Year_of_Release != "N/A" & Year_of_Release <= 2016)) +
+          geom_point(aes(color=Genre)) +
+          ylab('Critic Scores') +
+          facet_wrap(~Genre) +
+          theme(axis.text.x = element_text(angle=45, hjust=1)) +
+          scale_x_continuous(trans='log10') +
+          geom_smooth(method='lm', se=FALSE),
+  ggplot(aes(y=as.numeric(User_Score), x=Global_Sales), 
+       data=filter(vg, Year_of_Release != "N/A" & Year_of_Release <= 2010)) +
+          geom_point(aes(color=Genre)) + 
+          facet_wrap(~Genre) +
+          ylab('Users Score') +
+          theme(axis.text.x = element_text(angle=45, hjust=1)) +
+          scale_x_continuous(trans='log10') +
+          geom_smooth(method='lm', se=FALSE),
+  ncol=2)
+
+
+```
+
+Across almost every genre, critics has more of a positive correlation than 
+users. It also seems like critics have a wider spread of review scores which
+matches with what I observed in the boxplots.
+
+
+```{r echo=FALSE, warning=FALSE, fig.height=8, fig.width=12, Platform_Global}
+# grid arrangement of point plots with log2 scaling for platforms
+grid.arrange(
+  ggplot(aes(y=Critic_Score, x=Global_Sales), 
+       data=filter(vg, Critic_Score >= 0)) +
+          geom_point(aes(color=Platform, alpha=Global_Sales)) +
+          ylab('Critic Scores') +
+          facet_wrap(~Platform) +
+          theme(axis.text.x = element_text(angle=90, hjust=1)) +
+          scale_x_continuous(trans='log2') +
+          geom_smooth(method='lm', se=FALSE),
+  ggplot(aes(y=User_Score, x=Global_Sales), 
+       data=filter(vg, User_Score >= 0)) +
+          geom_point(aes(color=Platform, alpha=Global_Sales)) + 
+          facet_wrap(~Platform) +
+          ylab('Users Score') +
+          theme(axis.text.x = element_text(angle=90, hjust=1)) +
+          scale_x_continuous(trans='log2') +
+          geom_smooth(method='lm', se=FALSE),
+  ncol=2)
+
+
+```
+
+I was thrown off by this plot initially. I was not expecting multiple platforms
+to have a negative correlation with user scores and global sales. Critics 
+doesn't demonstrate a single negative correlation with platform and global sales.
+
+
+Next I wanted to see the trend of sales over time by Region.
+
+
+```{r echo=FALSE, warning=FALSE, fig.height=10, fig.width=16, Year}
+
+filter(vg, Year_of_Release <= 2016) %>%
+  select(Year_of_Release, NA_Sales, EU_Sales, JP_Sales, Other_Sales) %>%
+  group_by(Year_of_Release) %>%
+  summarise(NorthAmerica=sum(NA_Sales), Europe=sum(EU_Sales), Japan=sum(JP_Sales), Other=sum(Other_Sales)) %>%
+  ggplot(aes(x=Year_of_Release, y=NorthAmerica, group=1, colour='NA')) +
+  geom_line() +
+  geom_line(aes(y=Europe, colour='EU')) +
+  geom_line(aes(y=Japan, colour='JP')) +
+  geom_line(aes(y=Other, colour='Other')) +
+  scale_x_continuous(breaks=seq(1980, 2016)) +
+  scale_colour_manual("",
+                      breaks = c('NA', 'EU', 'JP', 'Other'),
+                      values = c('red', 'green', 'blue', 'purple')) +
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)) +
+  ylab('Global Sales')
+```
+
+
+Almost since the creation of home entertainment systems, NA has lead the global
+sales with only a few exceptions. I never expected NA to outsell every region
+so dominately after the year 2000. NA maintained this lead until 2016, when
+the entire global market decreased. Could this be a fault in the data? 
+
+
+```{r echo=FALSE, warning=FALSE, fig.height=10, fig.width=16, Sales_by_Region}
+
+filter(vg, Year_of_Release <= 2016) %>%
+  select(Year_of_Release, NA_Sales, EU_Sales, JP_Sales, Other_Sales, Genre) %>%
+  group_by(Year_of_Release, Genre) %>%
+  # sum all regional sales for plotting
+  summarise(
+    NorthAmerica=sum(NA_Sales), Europe=sum(EU_Sales), Japan=sum(JP_Sales),
+    Other=sum(Other_Sales)) %>%
+    ggplot(aes(x=Year_of_Release, y=NorthAmerica, group=1, colour='NA')) +
+      geom_line() +
+      # manually color the plotted lines
+      geom_line(aes(y=Europe, colour='EU')) +
+      geom_line(aes(y=Japan, colour='JP')) +
+      geom_line(aes(y=Other, colour='Other')) +
+      scale_x_continuous(breaks=seq(1980, 2016, 2)) +
+      scale_colour_manual("",
+                          breaks = c('NA', 'EU', 'JP', 'Other'),
+                          values = c('red', 'green', 'blue', 'purple')) +
+      theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)) +
+      facet_wrap(~Genre) +
+      ylab('Sales by Region and Genre by Year')
+
+
+```
+
+Here I can see that at the start of the video game era, the platform genre 
+accounted for a significant amount of the global sales, and slowly lost it's 
+appeal based on sale figures. Action and Sports games became the dominate 
+genres starting in the late 90s.
+
+By region, the same trend emerges except for the JP region. Role-playing games
+have consistently been the highest contributor to sales, with the action genre
+overtaking it starting in 2014.
+
+
+
+```{r echo=FALSE, warning=FALSE, message=FALSE, fig.height=10, fig.width=16, Sales_by_Plat}
+filter(vg, Year_of_Release <= 2016) %>%
+  select(Year_of_Release, NA_Sales, EU_Sales, JP_Sales, Other_Sales, Platform) %>%
+  group_by(Year_of_Release, Platform) %>%
+  # sum all regional sales for plotting
+  summarise(
+    NorthAmerica=sum(NA_Sales), Europe=sum(EU_Sales), Japan=sum(JP_Sales),
+    Other=sum(Other_Sales)) %>%
+    ggplot(aes(x=Year_of_Release, y=NorthAmerica, group=Platform, colour='NA')) +
+      geom_line() +
+      # manually color the plotted lines
+      geom_line(aes(y=Europe, colour='EU')) +
+      geom_line(aes(y=Japan, colour='JP')) +
+      geom_line(aes(y=Other, colour='Other')) +
+      scale_x_continuous(breaks=seq(1980, 2016, 3)) +
+      scale_colour_manual("",
+                      breaks = c('NA', 'EU', 'JP', 'Other'),
+                      values = c('red', 'green', 'blue', 'purple')) +
+      theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3)) +
+      facet_wrap(~Platform) +
+      ylab('Sales by Region and Platform by Year')
+
+
+```
+
+
+Plotting platforms over time, you can almost pinpoint exactly when a specific 
+platform was released and reached end of life. I was impressed with how long the
+GB was on the market capturing sales. I was surprised that a few regions outsold
+NA, the PS4, SNES, SAT and PSP all sold better in other regions for a time period.
+
+Next I wanted to take another look at the potential relationship between scores
+and global sales.
+
+
+
+```{r echo=FALSE, warning=FALSE, fig.height=10, fig.width=12, Multi-variates}
+# function to making correlation lines easier to plot
+corr_lines <- function(feature, label) {
+  return(vg %>%
+           select(Global_Sales, vg$feature, Genre) %>%
+           filter(!Genre=="") %>%
+           ggplot(aes(x=Global_Sales, y=feature, col=Genre)) +
+           geom_point() +
+           ylab(label) +
+           xlim(0, 45) +
+           ylim(0, 40) +
+           geom_smooth(method='lm'))
+
+}
+
+grid.arrange(
+  corr_lines(vg$NA_Sales, "NA_Sales"),
+  corr_lines(vg$EU_Sales, "EU_Sales"),
+  corr_lines(vg$JP_Sales, "JP_Sales"),
+  corr_lines(vg$Other_Sales, "Other Sales"),
+ncol=2)
+
+
+```
+
+It's clear that NA_Sales has a strong positive relationship with Global Sales. 
+For NA I was expecting either action or sports to have the strongest correlation
+with Global Sales, but it actually looks like the Shooter genre has the largest
+positive correlation. 
+
+
+
+```{r echo=FALSE, warning=FALSE, fig.width=12, fig.height=10, Corrs_Plot}
+# remove all NA values from the dataset
+vg_corr <- vg %>%
+  drop_na()
+# filter the dataset to show only numerical columns
+num.cols <- sapply(vg_corr, is.numeric)
+cor.data <- cor(vg_corr[, num.cols])
+# create a correlation plot
+corrplot(cor.data, method='color',col=brewer.pal(n=10,name='RdBu'), 
+         numer.cex=.7, addCoef.col = "black")
+```
+
+NA_Sales has the strong correlation with Global Sales out of all the other
+regions here, which was to be expected. Critic scores have a much stronger
+positive correlation to all sales regions than users. The variable that caught
+my eye was User Count, and Critic count which both actually have a more positive
+relationship than the actual scores does on sales.
+
+
+
+# Multivariate Analysis
+
+### Talk about some of the relationships you observed in this part of the  \  
+investigation. Were there features that strengthened each other in terms of  \  
+looking at your feature(s) of interest?
+
+Genre has an impact on sales, the Action and Sports genres for example outsold
+every other genre while not having the best scores. All the regions share a 
+relationship with Global Sales as well, with NA_Sales having the strongest 
+relationship amongst the regions.
+
+
+### Were there any interesting or surprising interactions between features?
+
+I was surprised at the interaction between user scores, global sales and the
+individual platforms. I was not expecting several platforms to have a negative
+correlation with user scores and global sales.
+
+The other interesting interactions are the user and critic count relationships
+with sales. Almost every sales region have a more positive correlation with the
+counts instead of the scores. This could be due to missing values in the scores,
+but it intrigued me.
+
+------
+
+# Final Plots and Summary
+
+
+
+### Plot One
+```{r echo=FALSE, fig.height=10, fig.width=12, Plot_One}
+grid.arrange(
+  ggplot(aes(y=Critic_Score, x=Global_Sales), 
+         data=filter(vg, Critic_Score >= 0)) +
+    geom_point(aes(color=Platform, alpha=Global_Sales)) +
+    # adds titles and labels to plot
+    ylab('Critic Score (0-100)') +
+    xlab('Global Scoles (Log2 Units per Million)') +
+    ggtitle("Critic Score and Global Sales by Genre") +
+    facet_wrap(~Platform) +
+    theme(axis.text.x = element_text(angle=90, hjust=1)) +
+    scale_x_continuous(trans='log2', labels=scales::comma) +
+    theme(legend.position="None") +
+    geom_smooth(method='lm', col='white') +
+    scale_fill_gradientn(colours=c('black', "white"),
+                         name="platform", na.value=NA) +
+    # sets plot backgroun color to black
+    theme(panel.background = element_rect(fill='black'),
+          panel.grid.major=element_blank(),
+          panel.grid.minor=element_blank()),
+  
+  ggplot(aes(y=User_Score, x=Global_Sales), 
+       data=filter(vg, User_Score >= 0)) +
+    geom_point(aes(color=Platform, alpha=Global_Sales)) + 
+    facet_wrap(~Platform) +
+    # adds titles and labels to plot
+    ylab('Users Score (0-100)') +
+    xlab('Global Scoles (Log2 Units per Million)') +
+    ggtitle("Users Score and Global Sales by Genre") +
+    theme(axis.text.x = element_text(angle=90, hjust=1)) +
+    scale_x_continuous(trans='log2', labels=scales::comma) +
+    theme(legend.position="None") +
+    geom_smooth(method='lm', col='white') + 
+    scale_fill_gradientn(colours=c('black', "red"),
+                         name="platform", na.value=NA) +
+    # sets plot backgroun color to black
+    theme(panel.background = element_rect(fill='black'),
+          panel.grid.major=element_blank(),
+          panel.grid.minor=element_blank()),
+  ncol=2)
+```
+
+### Description One
+
+I select this plot because it indicates a difference between the users and critics
+across platforms. It illustrates how critics have a positive correlation across
+the board for every platform. However, users demonstrate a negative correlation
+across 5 platforms. 
+
+### Plot Two
+```{r echo=FALSE, Plot_Two}
+ggplot(filter(vg_keys, Key != "Global_Sales"), mapping=aes(x=Genre, y=Value)) +
+  ggtitle("Units Sold per Region by Genre") +
+  geom_col(mapping=aes(x=Genre, y=Value, fill=Genre)) +
+  theme(axis.text.x = element_text(angle = 90, hjust =1, vjust=0.3),
+        panel.background = element_rect(fill="black"),
+        panel.grid.major=element_blank()) +
+  ylab('Units Sold per Million Units') +
+  facet_wrap(~Key, ncol=2)
+```
+
+### Description Two
+
+This plot was chosen because it indicates very clearly that the Action genre
+is the #1 seller in all regions except Japan. It also shows that the sports
+genre is the 2nd most popular, once again with the exception of Japan. In
+Japan, Role-Playing games outsell every other genre significantly.
+
+### Plot Three
+```{r echo=FALSE, fig.width=12, fig.height=10, Plot_Three}
+corrplot(cor.data, method='color', title='Video Game Correlations',
+         # select color profile
+         col=brewer.pal(n=10,name='RdBu'),
+         outline=TRUE, addCoef.col = "black",
+         # add colored text, and margins to plot
+         tl.col = 'black', tl.cex = 1.5, tl.srt=45,
+         mar=c(0,0,3,0))
+```
+
+### Description Three
+
+
+The coorelation plot was chosen as the final plot, because it shed some light
+in an area that I did not see in other plots. The relationship between
+user and critic counts have more of a positive correlation than the action
+scores in almost every instance, and in some instances drastically different.
+The only exception is once again Japan, where we don't see the same relationship
+for users. The plot organizes information very well, and you can quickly identify
+the potential relationships between variables.
+
+
+------
+
+# Reflection
+
+The videogame data set contains information on approximately 16, 700 observations
+across 16 variables from 1980 to 2016, and it was collected from a single source
+website Metacritic.  I started by understanding the various variables within
+the dataset. I explored questions I had about the dataset, and continued to make
+observations from the various plots.  
+
+There was success during my analysis of the dataset. There's a correlation 
+between specific genre types, platforms, and critic and user scores to a less 
+extent. For example, I was quite surprised at exactly how many
+sales the Action genre had across every region, as well as sports. Japan having
+higher sales for the role playing genre is also curious. I wasn't expecting
+this genre to signifcantly outsell the other genres as much as it did. The
+correlation that surprised me the most, has to be the results from observing
+how user and critic counts correlate to sales. I did not expect them to have a 
+more positive correlation than the actual votes. However, I saw with the exception
+of Japan that counts were either more positive or within a few points of the
+actual scores.
+
+The limitations I encountered with the dataset includes the sorce data. There's
+a significant amount of data missing, along with only coming from a single source
+Metacritic. The website launched in 1999, and has data going back to the 1980.
+There are several observations that do not have metrics available for them, 
+more commonly among the user, critic, publisher and rating variables. These 
+missing values could have impacted the observations I've made significantly.
+To investigate the dataset further, I would prefer to validate the data against
+multiple other sources to have a more thorough and validated collection of 
+observations. This could lead to further insights and potentially help identify
+additional relationships between the variables.

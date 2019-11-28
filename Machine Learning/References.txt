@@ -1,0 +1,6 @@
+References Used:
+
+https://developers.google.com/machine-learning/glossary/
+https://scikit-learn.org/stable/user_guide.html#user-guide
+https://chrisalbon.com/
+https://docs.python.org/3/library/pickle.html

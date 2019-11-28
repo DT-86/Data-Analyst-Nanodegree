@@ -1,0 +1,14 @@
+Resources:
+
+https://docs.google.com/document/d/1-f3wM3mJSkoWxDmPjsyRnWvNgM57YUPloucOIl07l4c/pub#h.4cjvtuxjsa56
+
+https://r4ds.had.co.nz/index.html
+
+https://github.com/rstudio/cheatsheets/blob/master/data-import.pdf
+
+https://www.rstudio.com/wp-content/uploads/2015/02/rmarkdown-cheatsheet.pdf
+
+https://s3.amazonaws.com/udacity-hosted-downloads/ud651/GeographyOfAmericanMusic.html
+
+https://s3.amazonaws.com/content.udacity-data.com/courses/ud651/diamondsExample_2016-05.html
+
